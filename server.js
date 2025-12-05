@@ -14,10 +14,6 @@ const streamClient = new StreamClient(
 
 app.post('/stream/token', async (req, res) => {
 
-  console.log("---- NEW REQUEST ----");
-  console.log("Headers:", req.headers);
-  console.log("Body:", req.body);
-
 
   if (!req.body || !req.body.userId) {
     return res.status(400).json({ error: "userId is required" });
@@ -29,21 +25,31 @@ app.post('/stream/token', async (req, res) => {
 });
 
 app.post('/stream/create-call', async (req, res) => {
-  const { bookingId, professionalId, patientId } = req.body;
-  const callId = `consultation_${bookingId}`;
-  
-  const call = streamClient.video.call('video', callId);
-  await call.create({
-    data: {
-      members: [
-        { user_id: professionalId },
-        { user_id: patientId }
-      ]
+  try {
+    const { bookingId, professionalId, patientId } = req.body;
+    if (!bookingId || !professionalId || !patientId) {
+      return res.status(400).json({ error: "All fields are required" });
     }
-  });
-  
-  res.json({ callId });
+
+    const callId = `consultation_${bookingId}`;
+    const call = streamClient.video.call('video', callId);
+
+    await call.create({
+      data: {
+        members: [
+          { user_id: professionalId },
+          { user_id: patientId }
+        ],
+      },
+    });
+
+    res.json({ callId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to create call" });
+  }
 });
+
 
 app.post('/stream/end-call', async (req, res) => {
   const { callId } = req.body;
