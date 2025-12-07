@@ -7,14 +7,13 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+// Ensure these environment variables are set on Render and in your local .env
 const streamClient = new StreamClient(
   process.env.STREAM_API_KEY,
   process.env.STREAM_API_SECRET
 );
 
 app.post('/stream/token', async (req, res) => {
-
-
   if (!req.body || !req.body.userId) {
     return res.status(400).json({ error: "userId is required" });
   }
@@ -28,6 +27,7 @@ app.post('/stream/create-call', async (req, res) => {
   try {
     console.log('📞 Received create-call request:', req.body);
     
+    // We receive professionalId and patientId from the client
     const { bookingId, professionalId, patientId } = req.body;
     
     if (!bookingId || !professionalId || !patientId) {
@@ -38,7 +38,6 @@ app.post('/stream/create-call', async (req, res) => {
     console.log('🔧 Creating Stream call...');
     const callId = `consultation_${bookingId}`;
     
-    // Check if streamClient is initialized
     if (!streamClient) {
       console.error('❌ Stream client not initialized!');
       return res.status(500).json({ error: 'Stream client not configured' });
@@ -47,8 +46,13 @@ app.post('/stream/create-call', async (req, res) => {
     console.log('📹 Calling Stream API for callId:', callId);
     const call = streamClient.video.call('video', callId);
 
+    // **********************************************
+    // 💡 FIX APPLIED HERE: Add created_by_user_id
+    // **********************************************
     await call.create({
       data: {
+        // REQUIRED FOR SERVER-SIDE AUTH
+        created_by_user_id: professionalId, 
         members: [
           { user_id: professionalId },
           { user_id: patientId }
@@ -60,12 +64,9 @@ app.post('/stream/create-call', async (req, res) => {
     res.json({ callId, success: true });
     
   } catch (err) {
-    // ✅ LOG THE ACTUAL ERROR
     console.error('❌ CREATE CALL ERROR:', err);
     console.error('Error message:', err.message);
-    console.error('Error stack:', err.stack);
     
-    // Return more detailed error
     res.status(500).json({ 
       error: "Failed to create call",
       details: err.message,
