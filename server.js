@@ -1,4 +1,4 @@
-// server.js - FIXED VERSION WITH created_by_id
+// server.js - FIXED VERSION WITH created_by_id AND CORRECT CALL TYPE
 const express = require('express');
 const { StreamClient } = require('@stream-io/node-sdk');
 const cors = require('cors');
@@ -80,8 +80,10 @@ app.post('/stream/create-call', async (req, res) => {
     const callId = `consultation_${bookingId}`;
     console.log('🎬 Creating call with ID:', callId);
     
-    // Get the call reference
-    const call = streamClient.video.call('video', callId);
+    // ✅ FIX: Use 'default' call type instead of 'video'
+    // The 'video' call type doesn't exist in your Stream account
+    // Available types: audio_room, default, development, livestream
+    const call = streamClient.video.call('default', callId);
     
     // ✅ FIX: Add created_by_id to specify who is creating the call
     // This is REQUIRED when using server-side authentication
@@ -140,7 +142,7 @@ app.post('/stream/end-call', async (req, res) => {
     console.log('📴 Ending call:', callId);
     
     // Optional: You can add logic here to end the call on Stream's side
-    // const call = streamClient.video.call('video', callId);
+    // const call = streamClient.video.call('default', callId);
     // await call.end();
     
     res.json({ 
