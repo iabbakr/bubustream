@@ -1,5 +1,5 @@
-// server.js - FINAL WORKING VERSION
-// Fixes: created_by_id, correct call type, and user upsert before call creation
+// server.js - FINAL WORKING VERSION (DEC 2025)
+// Fixes: created_by_id, correct call type, and user upsert (array format for latest SDK)
 
 const express = require('express');
 const { StreamClient } = require('@stream-io/node-sdk');
@@ -50,7 +50,7 @@ app.post('/stream/token', async (req, res) => {
   }
 });
 
-// Create video call - FULLY FIXED
+// Create video call - FULLY FIXED FOR LATEST SDK
 app.post('/stream/create-call', async (req, res) => {
   try {
     const { 
@@ -81,22 +81,20 @@ app.post('/stream/create-call', async (req, res) => {
     const callId = `consultation_${bookingId}`;
     console.log('Creating call with ID:', callId);
 
-    // CRITICAL FIX: Create or update both users on Stream first
+    // CRITICAL FIX: upsertUsers now requires an ARRAY of user objects (latest SDK)
     console.log('Upserting users on Stream...');
-    await streamClient.upsertUsers({
-      users: {
-        [professionalId]: {
-          id: professionalId,
-          name: professionalName,
-          role: 'admin' // optional: gives extra permissions in calls
-        },
-        [patientId]: {
-          id: patientId,
-          name: patientName,
-          role: 'user'
-        }
+    await streamClient.upsertUsers([
+      {
+        id: professionalId,
+        name: professionalName,
+        role: 'admin'  // Optional: gives extra permissions in calls
+      },
+      {
+        id: patientId,
+        name: patientName,
+        role: 'user'
       }
-    });
+    ]);
     console.log('Users upserted successfully');
 
     // Now create the call
@@ -104,7 +102,7 @@ app.post('/stream/create-call', async (req, res) => {
     
     await call.create({
       data: {
-        created_by_id: professionalId, // who is starting the call
+        created_by_id: professionalId, // Professional starts the call
         
         members: [
           { user_id: professionalId },
@@ -131,19 +129,18 @@ app.post('/stream/create-call', async (req, res) => {
     
   } catch (error) {
     console.error('CREATE CALL ERROR:', error);
-    console.error('Error message:', error.message);
-    console.error('Error code:', error.code || 'unknown');
+    console.error('Full error:', error);
     
     res.status(500).json({ 
       error: 'Failed to create call',
-      details: error.message,
+      details: error.message || String(error),
       code: error.code || null,
       timestamp: new Date().toISOString()
     });
   }
 });
 
-// End call endpoint (optional - Stream calls end when participants leave)
+// End call endpoint (optional)
 app.post('/stream/end-call', async (req, res) => {
   try {
     const { callId } = req.body;
