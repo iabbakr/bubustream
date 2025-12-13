@@ -79,7 +79,8 @@ app.post('/stream/create-call', async (req, res) => {
     }
     
     const callId = `consultation_${bookingId}`;
-    console.log('Creating call with ID:', callId);
+    console.log(`Creating call: ${callId} for Prof: ${professionalId} and Patient: ${patientId}`);
+    //console.log('Creating call with ID:', callId);
 
     // CRITICAL FIX: upsertUsers now requires an ARRAY of user objects (latest SDK)
     console.log('Upserting users on Stream...');
@@ -102,18 +103,15 @@ app.post('/stream/create-call', async (req, res) => {
     
     await call.create({
       data: {
-        created_by_id: professionalId, // Professional starts the call
-        
+        created_by_id: professionalId, // Only professional creates it
         members: [
-          { user_id: professionalId },
-          { user_id: patientId }
+          { user_id: professionalId, role: 'host' },
+          { user_id: patientId, role: 'attendee' }
         ],
-        
         custom: {
-          bookingId,
-          professionalName,
-          patientName,
-          consultationType: 'video'
+          bookingId: bookingId,
+          patientName: patientName,
+          professionalName: professionalName
         }
       }
     });
