@@ -1,5 +1,10 @@
-// server.js - FINAL WORKING VERSION (DEC 2025)
-// Fixes: Strict ID match (no prefixes), correct user upserting, and clean error handling.
+// server.js - FINAL FIXED VERSION (DECEMBER 2025)
+// Fixes:
+// - Removed invalid 'role: "attendee"' (not a valid role for 'default' call type)
+// - Removed unnecessary 'role: "host"' (no such built-in role; use 'admin' if needed)
+// - Kept user upsert with 'admin' role for professional (optional but useful)
+// - No explicit member roles → both users get full default permissions (perfect for 1:1 consultations)
+// - Strict callId = bookingId (no prefixes) for perfect client-server match
 
 const express = require('express');
 const { StreamClient } = require('@stream-io/node-sdk');
@@ -34,7 +39,6 @@ app.post('/stream/token', async (req, res) => {
       return res.status(400).json({ error: 'userId is required' });
     }
     
-    // console.log('Generating token for user:', userId);
     const token = streamClient.createToken(userId);
     res.json({ token });
     
@@ -47,7 +51,7 @@ app.post('/stream/token', async (req, res) => {
   }
 });
 
-// ✅ CREATE VIDEO CALL - STRICT ID CONSISTENCY
+// ✅ CREATE VIDEO CALL - FIXED ROLES & ID CONSISTENCY
 app.post('/stream/create-call', async (req, res) => {
   try {
     const { 
@@ -66,35 +70,36 @@ app.post('/stream/create-call', async (req, res) => {
       });
     }
     
-    // 1. STRICT ID: Use the Booking ID directly. NO PREFIXES.
-    // This ensures frontend and backend IDs match perfectly.
+    // Use exact bookingId as callId (no prefixes) for perfect match with client
     const callId = bookingId; 
     console.log(`Creating call: ${callId} [Prof: ${professionalId}, Patient: ${patientId}]`);
 
-    // 2. UPSERT USERS: Ensure they exist on Stream (Array format required by SDK v5+)
+    // Upsert users to ensure they exist and optionally assign global roles
+    // 'admin' role gives extra capabilities globally (useful for professional)
     await streamClient.upsertUsers([
       {
         id: professionalId,
         name: professionalName,
-        role: 'admin'  // Professional gets admin rights
+        role: 'admin'  // Optional: gives professional elevated permissions globally
       },
       {
         id: patientId,
-        name: patientName,
-        role: 'user'
+        name: patientName
+        // Default role 'user' is fine for patient
       }
     ]);
 
-    // 3. CREATE CALL INSTANCE
+    // Create call instance
     const call = streamClient.video.call('default', callId);
     
-    // 4. CREATE ON STREAM SERVERS
+    // Create the call on Stream servers
     await call.create({
       data: {
         created_by_id: professionalId,
+        // No explicit member roles → both get full permissions by default (ideal for 1:1 video)
         members: [
-          { user_id: professionalId, role: 'host' },
-          { user_id: patientId, role: 'attendee' }
+          { user_id: professionalId },
+          { user_id: patientId }
         ],
         custom: {
           bookingId,
@@ -124,7 +129,7 @@ app.post('/stream/create-call', async (req, res) => {
   }
 });
 
-// End call endpoint (optional)
+// End call endpoint (optional soft end)
 app.post('/stream/end-call', async (req, res) => {
   try {
     const { callId } = req.body;
@@ -155,7 +160,7 @@ app.listen(PORT, () => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received: shutting down gracefully');
-  server.close(() => {
+  app.close(() => {
     console.log('Server closed');
     process.exit(0);
   });
@@ -163,7 +168,7 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   console.log('SIGINT received: shutting down');
-  server.close(() => {
+  app.close(() => {
     console.log('Server closed');
     process.exit(0);
   });
