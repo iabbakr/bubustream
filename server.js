@@ -1,4 +1,6 @@
-// server.js - FIXED VERSION WITH created_by_id AND CORRECT CALL TYPE
+// server.js - FINAL WORKING VERSION
+// Fixes: created_by_id, correct call type, and user upsert before call creation
+
 const express = require('express');
 const { StreamClient } = require('@stream-io/node-sdk');
 const cors = require('cors');
@@ -8,7 +10,7 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Initialize Stream client with API key and secret from environment variables
+// Initialize Stream client with API key and secret
 const streamClient = new StreamClient(
   process.env.STREAM_API_KEY,
   process.env.STREAM_API_SECRET
@@ -23,24 +25,24 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Generate user token
+// Generate user token (client-side auth)
 app.post('/stream/token', async (req, res) => {
   try {
-    const { userId, userName } = req.body;
+    const { userId } = req.body;
     
     if (!userId) {
       return res.status(400).json({ error: 'userId is required' });
     }
     
-    console.log('🔑 Generating token for user:', userId);
+    console.log('Generating token for user:', userId);
     
     const token = streamClient.createToken(userId);
     
-    console.log('✅ Token generated successfully');
+    console.log('Token generated successfully');
     res.json({ token });
     
   } catch (error) {
-    console.error('❌ Token generation error:', error);
+    console.error('Token generation error:', error);
     res.status(500).json({ 
       error: 'Failed to generate token',
       details: error.message 
@@ -48,18 +50,18 @@ app.post('/stream/token', async (req, res) => {
   }
 });
 
-// Create video call - FIXED VERSION
+// Create video call - FULLY FIXED
 app.post('/stream/create-call', async (req, res) => {
   try {
     const { 
       bookingId, 
       professionalId, 
       patientId, 
-      professionalName, 
-      patientName 
+      professionalName = 'Professional',
+      patientName = 'Patient'
     } = req.body;
     
-    console.log('📞 Received create-call request:', {
+    console.log('Received create-call request:', {
       bookingId,
       professionalId,
       patientId,
@@ -69,68 +71,79 @@ app.post('/stream/create-call', async (req, res) => {
     
     // Validate required fields
     if (!bookingId || !professionalId || !patientId) {
-      console.error('❌ Missing required fields');
+      console.error('Missing required fields');
       return res.status(400).json({ 
         error: 'Missing required fields',
         required: ['bookingId', 'professionalId', 'patientId']
       });
     }
     
-    // Create call ID based on booking
     const callId = `consultation_${bookingId}`;
-    console.log('🎬 Creating call with ID:', callId);
-    
-    // ✅ FIX: Use 'default' call type instead of 'video'
-    // The 'video' call type doesn't exist in your Stream account
-    // Available types: audio_room, default, development, livestream
+    console.log('Creating call with ID:', callId);
+
+    // CRITICAL FIX: Create or update both users on Stream first
+    console.log('Upserting users on Stream...');
+    await streamClient.upsertUsers({
+      users: {
+        [professionalId]: {
+          id: professionalId,
+          name: professionalName,
+          role: 'admin' // optional: gives extra permissions in calls
+        },
+        [patientId]: {
+          id: patientId,
+          name: patientName,
+          role: 'user'
+        }
+      }
+    });
+    console.log('Users upserted successfully');
+
+    // Now create the call
     const call = streamClient.video.call('default', callId);
     
-    // ✅ FIX: Add created_by_id to specify who is creating the call
-    // This is REQUIRED when using server-side authentication
     await call.create({
       data: {
-        // CRITICAL: Specify who is creating the call (usually the professional)
-        created_by_id: professionalId,
+        created_by_id: professionalId, // who is starting the call
         
-        // Add both users as members
         members: [
           { user_id: professionalId },
           { user_id: patientId }
         ],
         
-        // Optional: Add custom data
         custom: {
-          bookingId: bookingId,
-          professionalName: professionalName,
-          patientName: patientName,
+          bookingId,
+          professionalName,
+          patientName,
           consultationType: 'video'
         }
       }
     });
     
-    console.log('✅ Call created successfully:', callId);
+    console.log('Call created successfully:', callId);
     
     res.json({ 
       callId,
       success: true,
+      message: 'Call created and users registered successfully',
       timestamp: new Date().toISOString()
     });
     
   } catch (error) {
-    console.error('❌ CREATE CALL ERROR:', error);
+    console.error('CREATE CALL ERROR:', error);
     console.error('Error message:', error.message);
-    console.error('Error code:', error.code);
+    console.error('Error code:', error.code || 'unknown');
     
     res.status(500).json({ 
       error: 'Failed to create call',
       details: error.message,
-      code: error.code,
+      code: error.code || null,
       timestamp: new Date().toISOString()
     });
   }
 });
 
-// End call endpoint
+// End call endpoint (optional - Stream calls end when participants leave)
 app.post('/stream/end-call', async (req, res) => {
   try {
     const { callId } = req.body;
@@ -139,19 +152,20 @@ app.post('/stream/end-call', async (req, res) => {
       return res.status(400).json({ error: 'callId is required' });
     }
     
-    console.log('📴 Ending call:', callId);
+    console.log('Ending call (soft):', callId);
     
-    // Optional: You can add logic here to end the call on Stream's side
+    // Optional: Force end on Stream side
     // const call = streamClient.video.call('default', callId);
     // await call.end();
     
     res.json({ 
       success: true,
+      message: 'Call end request processed',
       timestamp: new Date().toISOString()
     });
     
   } catch (error) {
-    console.error('❌ End call error:', error);
+    console.error('End call error:', error);
     res.status(500).json({ 
       error: 'Failed to end call',
       details: error.message 
@@ -159,9 +173,9 @@ app.post('/stream/end-call', async (req, res) => {
   }
 });
 
-// Error handling middleware
+// Global error handler
 app.use((err, req, res, next) => {
-  console.error('❌ Unhandled error:', err);
+  console.error('Unhandled error:', err);
   res.status(500).json({ 
     error: 'Internal server error',
     details: err.message 
@@ -170,36 +184,37 @@ app.use((err, req, res, next) => {
 
 // Start server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════╗
-║  🚀 Backend Server Running                        ║
-║  📍 Port: ${PORT}                                  ║
-║  🔧 Environment: ${process.env.NODE_ENV || 'development'}               ║
-║  ✅ Stream API configured: ${!!(process.env.STREAM_API_KEY && process.env.STREAM_API_SECRET) ? 'Yes' : 'No'}      ║
+║  Backend Server Running                           ║
+║  Port: ${PORT}                                           ║
+║  Environment: ${process.env.NODE_ENV || 'development'}             ║
+║  Stream Configured: ${!!(process.env.STREAM_API_KEY && process.env.STREAM_API_SECRET) ? 'YES' : 'NO'}      ║
 ╚════════════════════════════════════════════════════╝
   `);
   
-  // Validate environment variables
   if (!process.env.STREAM_API_KEY || !process.env.STREAM_API_SECRET) {
     console.warn(`
-⚠️  WARNING: Stream API credentials not configured!
-    Please set STREAM_API_KEY and STREAM_API_SECRET environment variables.
+WARNING: Stream API credentials missing!
+    Set STREAM_API_KEY and STREAM_API_SECRET in environment variables.
     `);
   }
 });
 
-// Handle graceful shutdown
+// Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('👋 SIGTERM signal received: closing HTTP server');
+  console.log('SIGTERM received: shutting down gracefully');
   server.close(() => {
-    console.log('✅ HTTP server closed');
+    console.log('Server closed');
+    process.exit(0);
   });
 });
 
-
-
-
-
-
-
+process.on('SIGINT', () => {
+  console.log('SIGINT received: shutting down');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
+});
