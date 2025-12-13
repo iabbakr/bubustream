@@ -1,5 +1,5 @@
 // server.js - FINAL WORKING VERSION (DEC 2025)
-// Fixes: created_by_id, correct call type, and user upsert (array format for latest SDK)
+// Fixes: Strict ID match (no prefixes), correct user upserting, and clean error handling.
 
 const express = require('express');
 const { StreamClient } = require('@stream-io/node-sdk');
@@ -34,11 +34,8 @@ app.post('/stream/token', async (req, res) => {
       return res.status(400).json({ error: 'userId is required' });
     }
     
-    console.log('Generating token for user:', userId);
-    
+    // console.log('Generating token for user:', userId);
     const token = streamClient.createToken(userId);
-    
-    console.log('Token generated successfully');
     res.json({ token });
     
   } catch (error) {
@@ -50,7 +47,7 @@ app.post('/stream/token', async (req, res) => {
   }
 });
 
-// Create video call - FULLY FIXED FOR LATEST SDK
+// ✅ CREATE VIDEO CALL - STRICT ID CONSISTENCY
 app.post('/stream/create-call', async (req, res) => {
   try {
     const { 
@@ -61,34 +58,25 @@ app.post('/stream/create-call', async (req, res) => {
       patientName = 'Patient'
     } = req.body;
     
-    console.log('Received create-call request:', {
-      bookingId,
-      professionalId,
-      patientId,
-      professionalName,
-      patientName
-    });
-    
     // Validate required fields
     if (!bookingId || !professionalId || !patientId) {
-      console.error('Missing required fields');
       return res.status(400).json({ 
         error: 'Missing required fields',
         required: ['bookingId', 'professionalId', 'patientId']
       });
     }
     
-    const callId = `consultation_${bookingId}`;
-    console.log(`Creating call: ${callId} for Prof: ${professionalId} and Patient: ${patientId}`);
-    //console.log('Creating call with ID:', callId);
+    // 1. STRICT ID: Use the Booking ID directly. NO PREFIXES.
+    // This ensures frontend and backend IDs match perfectly.
+    const callId = bookingId; 
+    console.log(`Creating call: ${callId} [Prof: ${professionalId}, Patient: ${patientId}]`);
 
-    // CRITICAL FIX: upsertUsers now requires an ARRAY of user objects (latest SDK)
-    console.log('Upserting users on Stream...');
+    // 2. UPSERT USERS: Ensure they exist on Stream (Array format required by SDK v5+)
     await streamClient.upsertUsers([
       {
         id: professionalId,
         name: professionalName,
-        role: 'admin'  // Optional: gives extra permissions in calls
+        role: 'admin'  // Professional gets admin rights
       },
       {
         id: patientId,
@@ -96,44 +84,42 @@ app.post('/stream/create-call', async (req, res) => {
         role: 'user'
       }
     ]);
-    console.log('Users upserted successfully');
 
-    // Now create the call
+    // 3. CREATE CALL INSTANCE
     const call = streamClient.video.call('default', callId);
     
+    // 4. CREATE ON STREAM SERVERS
     await call.create({
       data: {
-        created_by_id: professionalId, // Only professional creates it
+        created_by_id: professionalId,
         members: [
           { user_id: professionalId, role: 'host' },
           { user_id: patientId, role: 'attendee' }
         ],
         custom: {
-          bookingId: bookingId,
-          patientName: patientName,
-          professionalName: professionalName
+          bookingId,
+          professionalName,
+          patientName,
+          consultationType: 'video'
         }
       }
     });
     
-    console.log('Call created successfully:', callId);
+    console.log('✅ Call created successfully:', callId);
     
     res.json({ 
       callId,
       success: true,
-      message: 'Call created and users registered successfully',
+      message: 'Call created successfully',
       timestamp: new Date().toISOString()
     });
     
   } catch (error) {
     console.error('CREATE CALL ERROR:', error);
-    console.error('Full error:', error);
-    
     res.status(500).json({ 
       error: 'Failed to create call',
       details: error.message || String(error),
-      code: error.code || null,
-      timestamp: new Date().toISOString()
+      code: error.code || null
     });
   }
 });
@@ -142,59 +128,28 @@ app.post('/stream/create-call', async (req, res) => {
 app.post('/stream/end-call', async (req, res) => {
   try {
     const { callId } = req.body;
-    
-    if (!callId) {
-      return res.status(400).json({ error: 'callId is required' });
-    }
+    if (!callId) return res.status(400).json({ error: 'callId is required' });
     
     console.log('Ending call (soft):', callId);
+    // Optional: await streamClient.video.call('default', callId).end();
     
-    // Optional: Force end on Stream side
-    // const call = streamClient.video.call('default', callId);
-    // await call.end();
-    
-    res.json({ 
-      success: true,
-      message: 'Call end request processed',
-      timestamp: new Date().toISOString()
-    });
-    
+    res.json({ success: true, message: 'Call end request processed' });
   } catch (error) {
     console.error('End call error:', error);
-    res.status(500).json({ 
-      error: 'Failed to end call',
-      details: error.message 
-    });
+    res.status(500).json({ error: 'Failed to end call', details: error.message });
   }
-});
-
-// Global error handler
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ 
-    error: 'Internal server error',
-    details: err.message 
-  });
 });
 
 // Start server
 const PORT = process.env.PORT || 3000;
-const server = app.listen(PORT, () => {
+app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════╗
 ║  Backend Server Running                           ║
 ║  Port: ${PORT}                                           ║
-║  Environment: ${process.env.NODE_ENV || 'development'}             ║
 ║  Stream Configured: ${!!(process.env.STREAM_API_KEY && process.env.STREAM_API_SECRET) ? 'YES' : 'NO'}      ║
 ╚════════════════════════════════════════════════════╝
   `);
-  
-  if (!process.env.STREAM_API_KEY || !process.env.STREAM_API_SECRET) {
-    console.warn(`
-WARNING: Stream API credentials missing!
-    Set STREAM_API_KEY and STREAM_API_SECRET in environment variables.
-    `);
-  }
 });
 
 // Graceful shutdown
